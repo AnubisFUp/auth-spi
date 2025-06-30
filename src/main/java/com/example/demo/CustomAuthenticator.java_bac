@@ -1,0 +1,109 @@
+package com.example.demo;
+
+import org.keycloak.authentication.AuthenticationFlowContext;
+import org.keycloak.authentication.AuthenticationFlowError;
+import org.keycloak.authentication.Authenticator;
+import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.UserModel;
+import org.jboss.logging.Logger;
+
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
+
+import java.io.IOException;
+
+public class CustomAuthenticator implements Authenticator {
+
+    private static final Logger LOG = Logger.getLogger(CustomAuthenticator.class);
+
+    @Override
+    public void authenticate(AuthenticationFlowContext context) {
+        LOG.info("Custom Authenticator - authenticate");
+
+        HttpHeaders headers = context.getHttpRequest().getHttpHeaders();
+        MultivaluedMap<String, String> headerMap = headers.getRequestHeaders();
+
+        String username = headerMap.getFirst("X-Username");
+        String password = headerMap.getFirst("X-Password");
+
+        LOG.debugf("Получены заголовки: X-Username=%s, X-Password=%s", username, password != null ? "***" : "null");
+
+        if (username == null || password == null) {
+            LOG.warn("Не переданы X-Username или X-Password в заголовках");
+            context.failure(AuthenticationFlowError.INVALID_CREDENTIALS,
+                Response.status(Response.Status.BAD_REQUEST)
+                        .entity("Missing X-Username or X-Password headers")
+                        .build());
+            return;
+        }
+
+        User user = null;
+        try {
+            user = authenticateAndGetUser(username, password, context.getSession());
+        } catch (IOException e) {
+            LOG.error("Ошибка при вызове внешнего API", e);
+            context.failure(AuthenticationFlowError.INTERNAL_ERROR);
+            return;
+        }
+
+        if (user != null) {
+            try {
+                RealmModel realm = context.getRealm();
+                UserModel userModel = context.getSession().users().getUserByUsername(realm, username);
+
+                if (userModel == null) {
+                    userModel = context.getSession().users().addUser(realm, username);
+                    userModel.setEnabled(true);
+                }
+
+                userModel.setEmail(user.getEmail());
+                userModel.setFirstName(user.getFirstName());
+                userModel.setLastName(user.getLastName());
+
+                context.setUser(userModel);
+                context.success();
+            } catch (Exception e) {
+                LOG.error("Ошибка при создании или обновлении пользователя", e);
+                context.failure(AuthenticationFlowError.INTERNAL_ERROR);
+            }
+        } else {
+            context.failure(AuthenticationFlowError.INVALID_CREDENTIALS,
+                Response.status(Response.Status.UNAUTHORIZED)
+                        .entity("Invalid credentials")
+                        .build());
+        }
+    }
+
+    private User authenticateAndGetUser(String username, String password, KeycloakSession session) throws IOException {
+        UsersApiLegacyService apiService = new UsersApiLegacyService(session);
+        return apiService.authenticateUser(username, password);
+    }
+
+    @Override
+    public void action(AuthenticationFlowContext context) {
+        // Не требуется
+    }
+
+    @Override
+    public boolean requiresUser() {
+        return false;
+    }
+
+    @Override
+    public boolean configuredFor(KeycloakSession session, RealmModel realm, UserModel user) {
+        return true;
+    }
+
+    @Override
+    public void setRequiredActions(KeycloakSession session, RealmModel realm, UserModel user) {
+        // Не требуется
+    }
+
+    @Override
+    public void close() {
+        // Не требуется
+    }
+}
+
