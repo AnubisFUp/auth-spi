@@ -8,7 +8,6 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.jboss.logging.Logger;
 
-import jakarta.ws.rs.core.Cookie;
 import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
 
@@ -18,25 +17,9 @@ public class CustomAuthenticator implements Authenticator {
 
     private static final Logger LOG = Logger.getLogger(CustomAuthenticator.class);
 
-    protected boolean hasSessionCookie(AuthenticationFlowContext context) {
-        Cookie sessionCookie = context.getHttpRequest().getHttpHeaders().getCookies().get("KEYCLOAK_SESSION");
-        boolean result = sessionCookie != null;
-        if (result) {
-            LOG.info("Bypassing custom authenticator because KEYCLOAK_SESSION cookie is present");
-        } else {
-            LOG.info("KEYCLOAK_SESSION cookie not found, showing authentication form");
-        }
-        return result;
-    }
-
     @Override
     public void authenticate(AuthenticationFlowContext context) {
         LOG.info("Custom Authenticator - authenticate");
-
-        if (hasSessionCookie(context)) {
-            context.success();
-            return;
-        }
 
         Response challenge = context.form().createForm("custom-auth.ftl");
         context.challenge(challenge);
@@ -67,15 +50,19 @@ public class CustomAuthenticator implements Authenticator {
                 RealmModel realm = context.getRealm();
                 UserModel userModel = context.getSession().users().getUserByUsername(realm, username);
                 if (userModel == null) {
+                    LOG.infof("Пользователь %s не найден, создаётся новый пользователь", username);
                     userModel = context.getSession().users().addUser(realm, username);
                     userModel.setEnabled(true);
+                    userModel.setEmail(user.getEmail());
+                    userModel.setFirstName(user.getFirstName());
+                    userModel.setLastName(user.getLastName());
+                } else {
+                    LOG.infof("Пользователь %s найден в Keycloak", username);
                 }
-                userModel.setEmail(user.getEmail());
-                userModel.setFirstName(user.getFirstName());
-                userModel.setLastName(user.getLastName());
                 context.setUser(userModel);
                 context.success();
             } else {
+                LOG.warnf("Аутентификация не удалась для пользователя %s", username);
                 Response challenge = context.form()
                         .setError("invalidCredentials", "Неверные учетные данные")
                         .createForm("custom-auth.ftl");
