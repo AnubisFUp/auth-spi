@@ -10,21 +10,21 @@ import org.jboss.logging.Logger;
 
 import jakarta.ws.rs.core.Cookie;
 import jakarta.ws.rs.core.MultivaluedMap;
-import jakarta.ws.rs.core.NewCookie;
 import jakarta.ws.rs.core.Response;
 
 import java.io.IOException;
-import java.net.URI;
 
 public class CustomAuthenticator implements Authenticator {
 
     private static final Logger LOG = Logger.getLogger(CustomAuthenticator.class);
 
-    protected boolean hasCookie(AuthenticationFlowContext context) {
-        Cookie cookie = context.getHttpRequest().getHttpHeaders().getCookies().get("CUSTOM_AUTH_ANSWERED");
-        boolean result = cookie != null;
+    protected boolean hasSessionCookie(AuthenticationFlowContext context) {
+        Cookie sessionCookie = context.getHttpRequest().getHttpHeaders().getCookies().get("KEYCLOAK_SESSION");
+        boolean result = sessionCookie != null;
         if (result) {
-            LOG.info("Bypassing custom authenticator because cookie is set");
+            LOG.info("Bypassing custom authenticator because KEYCLOAK_SESSION cookie is present");
+        } else {
+            LOG.info("KEYCLOAK_SESSION cookie not found, showing authentication form");
         }
         return result;
     }
@@ -33,7 +33,7 @@ public class CustomAuthenticator implements Authenticator {
     public void authenticate(AuthenticationFlowContext context) {
         LOG.info("Custom Authenticator - authenticate");
 
-        if (hasCookie(context)) {
+        if (hasSessionCookie(context)) {
             context.success();
             return;
         }
@@ -74,29 +74,20 @@ public class CustomAuthenticator implements Authenticator {
                 userModel.setFirstName(user.getFirstName());
                 userModel.setLastName(user.getLastName());
                 context.setUser(userModel);
-                setCookie(context);
                 context.success();
             } else {
-                Response challenge = context.form().setError("invalidCredentials", "Неверные учетные данные").createForm("custom-auth.ftl");
+                Response challenge = context.form()
+                        .setError("invalidCredentials", "Неверные учетные данные")
+                        .createForm("custom-auth.ftl");
                 context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
             }
         } catch (IOException e) {
             LOG.error("Ошибка при вызове внешнего API", e);
-            Response challenge = context.form().setError("internalError", "Внутренняя ошибка сервера").createForm("custom-auth.ftl");
-	    context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR, challenge);
+            Response challenge = context.form()
+                    .setError("internalError", "Внутренняя ошибка сервера")
+                    .createForm("custom-auth.ftl");
+            context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR, challenge);
         }
-    }
-
-    protected void setCookie(AuthenticationFlowContext context) {
-        int maxCookieAge = 60 * 60 * 24 * 30; // 30 days
-        URI uri = context.getUriInfo().getBaseUriBuilder().path("realms").path(context.getRealm().getName()).build();
-
-        NewCookie newCookie = new NewCookie.Builder("CUSTOM_AUTH_ANSWERED").value("true")
-                .path(uri.getRawPath())
-                .maxAge(maxCookieAge)
-                .secure(false)
-                .build();
-        context.getSession().getContext().getHttpResponse().setCookieIfAbsent(newCookie);
     }
 
     private User authenticateAndGetUser(String username, String password, KeycloakSession session) throws IOException {
